@@ -73,13 +73,14 @@ def resample_to(df, cls):
     # said column in the process), and then reindex onto the original index.
     return df.groupby("class").apply(sample_ix).drop("class", axis=1).reset_index().set_index("level_1")
 
-def test(clf, df):
+def test(clf, df, results=None):
     """ Test the classifier `clf` on the dataframe `df`, using the "class" column
     as the value to be predicted. """
-    results = pd.DataFrame({
-        "prediction": clf.predict(df.drop("class", axis=1)),
-        "ground": df["class"]
-        }, index=df.index)
+    if results is None:
+        results = pd.DataFrame({
+            "prediction": clf.predict(df.drop("class", axis=1)),
+            "ground": df["class"]
+            }, index=df.index)
 
     summary = results.apply(pd.Series.value_counts).fillna(0)
 
@@ -100,8 +101,6 @@ def test(clf, df):
 def pca(df, components=2):
     log = logging.getLogger("pca")
     
-    # Don't PCA the classification
-
     # PCA the data -- project down to the principal two components
     log.debug("Running PCA to project to %s components", components)
     pca = sklearn.decomposition.RandomizedPCA(n_components=components)
@@ -110,7 +109,9 @@ def pca(df, components=2):
     # Drop nulls and outliers, and replace the classification
     pcaed = pcaed[pcaed[0] > 0].dropna(how="any", axis=0)
     pcaed["c"] = df["class"]
+    return pcaed
 
+def plot_pca(pcaed):
     # Choose a linearly spaced rainbow color for each class
     log.debug("Selecting colors")
     values = sorted(pcaed.c.unique())
@@ -129,6 +130,24 @@ def pca(df, components=2):
     axes.set_xticklabels([])
     axes.set_yticklabels([])
     pl.show()
+
+def ensemble(training_df, testing_df):
+    # Train an ensemble of classifiers on resampled data
+    N, clfs = 10, []
+    for _ in range(N):
+        clf = sklearn.svm.LinearSVC()
+        small = resample_to(training_df, "ATTACK")
+        print "Training classifier {}".format(_)
+        clf.fit(small.drop("class", axis=1), small["class"])
+        clfs.append(clf)
+
+    # Take the modal prediction as the ensemble's consensus
+    res = pd.DataFrame({"ground": testing_df["class"]})
+    for i, clf in enumerate(clfs):
+        res[i] = clf.predict(testing_df.drop("class", axis=1))
+    res = res.apply(lambda row: row.value_counts().idxmax(), axis=1)
+
+    
 
 def pie(df):
     classes = (df['class'].value_counts() / float(len(df)) * 100)
